@@ -1,41 +1,37 @@
-const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
-const cors = require('cors');
+// server.js
+import express from "express";
+import fetch from "node-fetch";
 
 const app = express();
-app.use(cors());
+const PORT = process.env.PORT || 10000;
 
-app.use('/proxy', createProxyMiddleware({
-  target: '', // dynamic target below
-  changeOrigin: true,
-  secure: false,
-  selfHandleResponse: true, // we'll handle the response
-  onProxyReq: (proxyReq, req, res) => {
-    // dynamically set target from query param
-    proxyReq.setHeader('host', new URL(req.query.url).host);
-  },
-  onProxyRes: async (proxyRes, req, res) => {
-    let body = [];
-    proxyRes.on('data', (chunk) => body.push(chunk));
-    proxyRes.on('end', () => {
-      body = Buffer.concat(body).toString('utf8');
+// Simple proxy endpoint
+app.get("/proxy", async (req, res) => {
+  const url = req.query.url;
+  if (!url) return res.status(400).send("Missing URL");
 
-      // Remove X-Frame-Options and CSP headers
-      proxyRes.headers['x-frame-options'] = '';
-      proxyRes.headers['content-security-policy'] = '';
+  try {
+    // Fetch the target website
+    const response = await fetch(url);
+    let body = await response.text();
 
-      // Send the response to the browser
-      res.set(proxyRes.headers);
-      res.send(body);
-    });
-  },
-  pathRewrite: {
-    '^/proxy': '',
-  },
-  router: (req) => {
-    return req.query.url; // dynamically route to the URL in query param
+    // Remove headers that prevent iframe embedding
+    res.set("X-Frame-Options", "ALLOWALL");
+    res.set("Content-Security-Policy", "default-src * 'unsafe-inline' 'unsafe-eval'");
+
+    // Optionally rewrite relative URLs in HTML (basic)
+    body = body.replace(/src="\/(.*?)"/g, `src="${url}/$1"`);
+    body = body.replace(/href="\/(.*?)"/g, `href="${url}/$1"`);
+
+    res.send(body);
+  } catch (err) {
+    res.status(500).send("Error fetching URL: " + err.message);
   }
-}));
+});
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log('Proxy running on port ' + PORT));
+// Health check
+app.get("/", (req, res) => {
+  res.send("Proxy is running!");
+});
+
+app.listen(PORT, () => console.log(`Proxy running on port ${PORT}`));
